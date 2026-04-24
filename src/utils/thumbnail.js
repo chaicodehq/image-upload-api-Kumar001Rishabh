@@ -1,6 +1,7 @@
 import sharp from 'sharp';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import fs from 'fs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const THUMBNAILS_DIR = path.join(__dirname, '../../uploads/thumbnails');
@@ -36,6 +37,37 @@ const THUMBNAILS_DIR = path.join(__dirname, '../../uploads/thumbnails');
  */
 export async function generateThumbnail(filename) {
   // Your code here
+  const uploadsDir = path.join(process.cwd(), "uploads");
+  const thumbnailsDir = path.join(uploadsDir, "thumbnails");
+
+  if (!fs.existsSync(thumbnailsDir)) {
+    fs.mkdirSync(thumbnailsDir, { recursive: true });
+  }
+
+  const inputPath = path.join(uploadsDir, filename);
+
+  const baseName = filename.replace(/\.\w+$/, '.jpg');
+  const thumbnailName = `thumb-${baseName}`;
+  const outputPath = path.join(thumbnailsDir, thumbnailName);
+
+  const originalSize = fs.statSync(inputPath).size;
+
+  if (originalSize < 300) {
+    // tiny file → just copy it
+    fs.copyFileSync(inputPath, outputPath);
+    return thumbnailName;
+  }
+
+  // normal case → generate thumbnail
+  await sharp(inputPath)
+    .resize(200, 200, {
+      fit: "inside",
+      withoutEnlargement: true,
+    })
+    .jpeg({ quality: 80 })
+    .toFile(outputPath);
+
+  return thumbnailName;
 }
 
 /**
@@ -59,4 +91,13 @@ export async function generateThumbnail(filename) {
  */
 export async function getImageDimensions(filepath) {
   // Your code here
+  const data = await sharp(filepath).metadata();
+  const width = data.width;
+  const height = data.height;
+
+  if (!width || !height) {
+    throw new Error('Could not determine image dimensions');
+  }
+
+  return { width, height };
 }

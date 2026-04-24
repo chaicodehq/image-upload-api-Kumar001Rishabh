@@ -21,6 +21,24 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export async function uploadImage(req, res, next) {
   try {
     // Your code here
+    if (!req.file) {
+      return res.status(400).json({ error: { message: "No file uploaded" } })
+    }
+
+    const { filename, originalname, mimetype, size } = req.file;
+    const filepath = path.join(__dirname, "../../uploads", filename);
+
+    const { width, height } = await getImageDimensions(filepath);
+    const thumbnailFilename = await generateThumbnail(filename);
+
+    const { description, tags } = req.body;
+    const parsedTags = tags
+      ? tags.split(",").map(tag => tag.trim())
+      : [];
+
+    const image = await Image.create({ filename, originalName: originalname, mimetype, size, width, height, description, tags: parsedTags, thumbnailFilename })
+
+    return res.status(201).json({ ...image.toObject() })
   } catch (error) {
     next(error);
   }
@@ -58,6 +76,34 @@ export async function uploadImage(req, res, next) {
 export async function listImages(req, res, next) {
   try {
     // Your code here
+    let { page = 1, limit = 10, search, mimetype, sortBy = 'uploadDate', sortOrder = 'desc' } = req.query;
+
+    page = Math.max(1, Number(page));
+    limit = Math.min(Number(limit), 50);
+
+    const query = {};
+
+    if (search) {
+      query.$text = { $search: search };
+    };
+
+    if (mimetype) {
+      query.mimetype = mimetype;
+    }
+
+    const total = await Image.countDocuments(query);
+    const skip = (page - 1) * limit;
+    const pages = Math.ceil(total / limit);
+
+    const sort = {};
+    sort[sortBy] = sortOrder === "desc" ? -1 : 1;
+
+
+    const images = await Image.find(query).sort(sort).skip(skip).limit(limit).lean();
+    const totalSize = images.reduce((sum, img) => sum + (img.size || 0), 0);
+
+    return res.status(200).json({ data: images, meta: { total, page, limit, pages, totalSize } })
+
   } catch (error) {
     next(error);
   }
@@ -73,6 +119,14 @@ export async function listImages(req, res, next) {
 export async function getImage(req, res, next) {
   try {
     // Your code here
+    const { id } = req.params;
+    const image = await Image.findById(id);
+
+    if (!image) {
+      return res.status(404).json({ error: { message: "Image not found" } });
+    }
+
+    return res.status(200).json(image.toObject());
   } catch (error) {
     next(error);
   }
@@ -94,6 +148,26 @@ export async function getImage(req, res, next) {
 export async function downloadImage(req, res, next) {
   try {
     // Your code here
+    const { id } = req.params;
+    const image = await Image.findById(id);
+
+    if (!image) {
+      return res.status(404).json({ error: { message: "Image not found" } });
+    }
+
+    const filePath = path.join(__dirname, "../../uploads", image.filename);
+
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: { message: "File not found" } });
+    }
+
+    res.setHeader("Content-Type", image.mimetype);
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${image.originalName}"`
+    );
+
+    return res.sendFile(filePath);
   } catch (error) {
     next(error);
   }
@@ -114,6 +188,23 @@ export async function downloadImage(req, res, next) {
 export async function downloadThumbnail(req, res, next) {
   try {
     // Your code here
+    const { id } = req.params;
+    const image = await Image.findById(id);
+
+    if (!image) {
+      return res.status(404).json({ error: { message: "Image not found" } });
+    }
+
+    const thumbnailPath = path.join(__dirname, "../../uploads/thumbnails", image.thumbnailFilename);
+
+    if (!fs.existsSync(thumbnailPath)) {
+      return res.status(404).json({ error: { message: "File not found" } });
+    }
+
+    res.setHeader("Content-Type", "image/jpeg");
+
+    return res.sendFile(thumbnailPath);
+
   } catch (error) {
     next(error);
   }
@@ -132,6 +223,32 @@ export async function downloadThumbnail(req, res, next) {
 export async function deleteImage(req, res, next) {
   try {
     // Your code here
+    const { id } = req.params;
+    const image = await Image.findById(id);
+
+    if (!image) {
+      return res.status(404).json({ error: { message: "Image not found" } });
+    }
+
+    const filePath = path.join(__dirname, "../../uploads", image.filename);
+    const thumbnailPath = path.join(__dirname, "../../uploads/thumbnails", image.thumbnailFilename);
+
+
+    try {
+       fs.unlinkSync(filePath);
+    } catch (err) {
+      if (err.code !== "ENOENT") throw err;
+    }
+
+    try {
+       fs.unlinkSync(thumbnailPath);
+    } catch (err) {
+      if (err.code !== "ENOENT") throw err;
+    }
+
+    await Image.findByIdAndDelete(id);
+
+    return res.status(204).send();
   } catch (error) {
     next(error);
   }
